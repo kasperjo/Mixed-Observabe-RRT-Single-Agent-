@@ -23,7 +23,7 @@ obs_choice = 0
 save_data = False
 
 # If simulation is True we use quadruped or drone. otherwise, we use euler integration for state updates etc.
-simulation = 'quadruped'
+simulation = False
 
 
 
