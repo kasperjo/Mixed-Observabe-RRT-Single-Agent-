@@ -12,7 +12,7 @@ class NLP(object):
     """ Non-Linear Program
 	"""
 
-    def __init__(self, N, Q, R, dR, Qf, goal, dt, bx, bu, printLevel):
+    def __init__(self, N, Q, R, dR, Qf, goal, dt, bx, bu, printLevel, agent, ellipse, avoid_obs=False):
         # Define variables
         self.N = N
         self.n = Q.shape[1]
@@ -25,6 +25,9 @@ class NLP(object):
         self.dR = dR
         self.goal = goal
         self.dt = dt
+        self.agent = agent  # 0 for quadruped, 1 for drone
+        self.ellipse = ellipse
+        self.avoid_obs = avoid_obs
 
         self.bx = bx
         self.bu = bu
@@ -41,6 +44,11 @@ class NLP(object):
         # Set initial condition + state and input box constraints
         self.lbx = x0.tolist() + (-self.bx).tolist() * (self.N) + (-self.bu).tolist() * self.N  # Reduce lower bound speed to avoid backing
         self.ubx = x0.tolist() + (self.bx).tolist() * (self.N) + (self.bu).tolist() * self.N
+
+        if self.avoid_obs:  # Obstacle constraint
+            self.lbx = self.lbx + [1] * (self.N-1) # + [-1000] * self.n
+            self.ubx = self.ubx + [100000] * (self.N-1)  # + [1000] * self.n 
+
         # Solve nonlinear programm
         start = time.time()
         sol = self.solver(lbx=self.lbx, ubx=self.ubx, lbg=self.lbg_dyanmics, ubg=self.ubg_dyanmics)
@@ -77,10 +85,13 @@ class NLP(object):
         # Define variables
         n = self.n
         d = self.d
+        N = self.N
 
         # Define variables
         X = SX.sym('X', n * (self.N + 1))
         U = SX.sym('U', d * self.N)
+        if self.avoid_obs:
+            slackObs = SX.sym('X', (self.N-1))
 
         # Define dynamic constraints
         self.constraint = []
@@ -88,6 +99,12 @@ class NLP(object):
             X_next = self.dynamics(X[n * i:n * (i + 1)], U[d * i:d * (i + 1)])
             for j in range(0, self.n):
                 self.constraint = vertcat(self.constraint, X_next[j] - X[n * (i + 1) + j])
+
+        # Obstacle constraint for quadruped
+        if self.avoid_obs:
+                for i in range(1, N):
+                    self.constraint = vertcat(self.constraint, ((X[n*i+0] -  self.ellipse[0])**2/self.ellipse[2]**2) + ((X[n*i+1] - self.ellipse[1])**2/self.ellipse[3]**2) - slackObs[i-1])
+
 
             # Defining Cost (We will add stage cost later)
         self.cost = 0
@@ -105,12 +122,19 @@ class NLP(object):
         # opts = {"verbose":False,"ipopt.print_level":0,"print_time":0,"ipopt.mu_strategy":"adaptive","ipopt.mu_init":1e-5,"ipopt.mu_min":1e-15,"ipopt.barrier_tol_factor":1}#, "ipopt.acceptable_constr_viol_tol":0.001}#,"ipopt.acceptable_tol":1e-4}#, "expand":True}
         opts = {"verbose": False, "ipopt.print_level": 0,
                 "print_time": 0}  # \\, "ipopt.acceptable_constr_viol_tol":0.001}#,"ipopt.acceptable_tol":1e-4}#, "expand":True}
-        nlp = {'x': vertcat(X, U), 'f': self.cost, 'g': self.constraint}
+        if self.avoid_obs:
+            nlp = {'x':vertcat(X,U, slackObs), 'f': self.cost, 'g': self.constraint}
+        else:
+            nlp = {'x': vertcat(X, U), 'f': self.cost, 'g': self.constraint}
         self.solver = nlpsol('solver', 'ipopt', nlp, opts)
 
         # Set lower bound of inequality constraint to zero to force n*N state dynamics
         self.lbg_dyanmics = [0] * (n * self.N)
         self.ubg_dyanmics = [0] * (n * self.N)
+
+        if self.avoid_obs:  # Add obstacle constraint for quadruped
+            self.lbg_dyanmics = self.lbg_dyanmics + [0*1.0]*(N-1) #+ [0]*n
+            self.ubg_dyanmics = self.ubg_dyanmics + [0*100000000]*(N-1) #+ [0]*n
 
     def dynamics_model(self, x, t, u):
         x_t = x[0]

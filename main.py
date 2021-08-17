@@ -12,18 +12,23 @@ from helper_functions import *
 import os
 from datetime import datetime
 
+# Agent: 0 for uwuadruped and 1 for drone
+agent = 0
 
 # Set precomputed to True if plan is precomputed and stored in .txt file
 precomputed = True
 
 # First observation: 0 or 1 (corresponding to e=1 and e=1, respectively)
-obs_choice = 0
+obs_choice = 1
 
 # If save_data is true text files closed loop trajectory, control inputs, solver time, and predicted trajectories are saved
 save_data = False
 
 # If simulation is True we use quadruped or drone. otherwise, we use euler integration for state updates etc.
 simulation = False
+
+# Include obstacle avoidance in MPC
+MCP_avoid_obs = False
 
 
 
@@ -35,16 +40,16 @@ from Version12_generalizedPlan_oneAgent import *
 if simulation == 'quadruped':
     stand_idqp()
     data = get_tlm_data()
-    x = data["q"][0]
-    y = data["q"][1]
-    theta = data["q"][5]
+    x_quad = data["q"][0]
+    y_quad = data["q"][1]
+    theta_quad = data["q"][5]
 
 # =====================================
 ### Root RRT Parameters ###
 if not simulation:
     x0 = Node(np.array([0, 0]))
 else:
-    x0 = Node(np.array([x, y]))  # Start Node without theta, for high level plan
+    x0 = Node(np.array([x_quad, y_quad]))  # Start Node without theta, for high level plan
     
 Xi = [[0, 5], [0, 5]]  # Constraint set
 xy_cords = [[0, 1]]  # Indices of xy-coordinates
@@ -61,9 +66,10 @@ Theta2 = np.array([[0, 0], [0, 1]])  # Observation accuracy matrix
 Omega = np.eye(2)  # Partially observable environment transition matrix
 b0 = np.array([1 / 2, 1 / 2])  # Initial belief
 obstacles = [[[2, 3], [2, 5]]]  # Obstacles
+obstacles_plan = [[[1.5, 3.5], [1.5, 5]]] # Obstacles for plan (larger than actual obstacles)
 observation_area1 = ObservationArea([[3, 5], [0, 1]], [Theta1, Theta2])  # First observation area
 observation_area2 = ObservationArea([[-15, 15], [8, 11]], [Theta1, Theta2])  # Second observation area
-observation_areas = [observation_area1]  # TODO: Add observation_area2 for experiment
+observation_areas = [observation_area1]  
 N = 1000  # Number of nodes for final RRT
 N_subtrees = 5  # Number of children of each RRT
 
@@ -87,7 +93,7 @@ if not precomputed:
 if not simulation:
     x0 = np.array([0, 0, 0])
 else:
-    x0 = np.array([x, y, theta])
+    x0 = np.array([x_quad, y_quad, theta_quad])
 dt = 0.1  # Discretization time
 sys = system(x0, dt, simulation)  # Including theta for mid-level MPC
 maxTime = 10  # Simulation time
@@ -105,6 +111,14 @@ Qf = 1000 * np.eye(n)
 # Remove cost of heading angle since high level plan is in xy-space
 Q[n - 1, n - 1] = 0
 Qf[n - 1, n - 1] = 0
+
+# Define obstacle ellipse
+obstacle = obstacles[0]
+el_x = (obstacle[0][1]+obstacle[0][0])/2
+el_y = (obstacle[1][1]+obstacle[1][0])/2
+el_ax = (obstacle[0][1]-obstacle[0][0])/2
+el_ay = (obstacle[1][1]-obstacle[1][0])/2
+ellipse=[el_x, el_y, el_ax, el_ay]
 
 # =================================================================
 # ======================== Subsection: Nonlinear MPC ==============
@@ -150,9 +164,9 @@ else:
     max_hierarchy = 1
 
 hierarchy = 0
-while hierarchy <= max_hierarchy:  # TODO: Change to 2 for two observations (or np.inf since we break loop when arriving at end node)
+while hierarchy <= max_hierarchy:  
     print('Hierarchy: ' + str(hierarchy))
-    # get_plan_node()  # TODO: For now we are fixing observations before-hand
+    # get_plan_node()  
 
     if not precomputed:
         path = return_subpath(plan_node, hierarchy)  
@@ -169,7 +183,7 @@ while hierarchy <= max_hierarchy:  # TODO: Change to 2 for two observations (or 
 
     # goal = all_goals_test[0] # FOR TESTING
 
-    nlp = NLP(N, Q, R, dR, Qf, goal, dt, xub, uub, printLevel)
+    nlp = NLP(N, Q, R, dR, Qf, goal, dt, xub, uub, printLevel, agent, ellipse, MCP_avoid_obs)
     xt = sys.x[-1]
     ut = nlp.solve(xt)
 
@@ -183,6 +197,18 @@ while hierarchy <= max_hierarchy:  # TODO: Change to 2 for two observations (or 
         ut = nlp.solve(xt, verbose=False)  # compute control input at time t
         xPredNLP.append(nlp.xPred)  # store predicted trajectory at time t
         sys.applyInput(ut)
+
+        # TODO: Apply input here for drone
+        if simulation == 'drone':
+            pass
+
+        # Compute state_next here for drone, due to ROS 
+        if sys.simulation == 'drone':
+            x_next = x
+            y_next = y
+            theta_next = yaw  # TODO: Correct?
+            state_next = np.array([x_next, y_next, theta_next])  
+            sys.x.append(state_next)
 
         dist = np.linalg.norm(sys.x[-1][:-1] - goal[:-1])
         i+=1
@@ -206,11 +232,11 @@ while hierarchy <= max_hierarchy:  # TODO: Change to 2 for two observations (or 
 
                 goal = np.append(goal, np.pi)
                 # goal = all_goals_test[i] # FOR TESTING
-                nlp = NLP(N, Q, R, dR, Qf, goal, dt, xub, uub, printLevel)
+                nlp = NLP(N, Q, R, dR, Qf, goal, dt, xub, uub, printLevel, agent, ellipse, MCP_avoid_obs)
                 # i += 1 # FOR TESTING
 
     # Stop robot until observation is made
-    if simulation:
+    if simulation=='quadruped':
         walk_mpc_idqp()  
         stand_idqp()
         time.sleep(5)
@@ -241,7 +267,7 @@ if save_data:
     np.savetxt('data/' + dt_string + 'solverTime.txt', np.array(nlp.solverTime)) 
 
     # Predicted Trajectories
-    pred_temp = open("data/" + dt_string + "xPredNLP.txt", "w")
+    pred_temp = open("data/" + dt_string + "xPredNLP_Nmpc" + str(N_MPC) + ".txt", "w")
     for row in xPredNLP:
         row = row.reshape(-1, n)
         np.savetxt(pred_temp, row, delimiter=',')

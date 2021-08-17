@@ -138,7 +138,7 @@ class Model:
 
                 return final_plan, final_costs
 
-    def plot_plan(self, end_nodes):
+    def plot_plan(self, end_nodes, colors=None):
         """
         Plots the possible paths in a plan, given all possible end nodes in array end_nodes
 
@@ -153,8 +153,11 @@ class Model:
         for end_node in end_nodes:
             paths.append(self.root.return_path(end_node))
 
-        for path in paths:
-            plot(self, path, 'r')
+        for i, path in enumerate(paths):
+            if colors is None:
+                plot(self, path, 'r')
+            else:
+                plot(self, path, colors[i])
 
         plt.xlim(self.root.Xi[0])
         plt.ylim(self.root.Xi[1])
@@ -195,6 +198,7 @@ class Model:
             observation = tree.observations[n]
             node_obs = observation[0]
             area_obs = observation[1]
+            area_index = observation[2]
 
             # Only count the cost from observation
             node_obs.path_costs = np.zeros(node_obs.path_costs.shape)
@@ -208,6 +212,9 @@ class Model:
                            observation_areas=tree.observation_areas, N_subtrees=tree.N_subtrees)
             RRT_temp.observed_areas = tree.observed_areas.copy()
             RRT_temp.observed_areas.append(area_obs)
+
+            if tree.observation_areas[area_index].perfect_obs:  # If observation is perfect, no more observations are needed
+                RRT_temp.observed_areas = tree.observation_areas
 
             # print(RRT_temp.observation_areas)
             # if RRT_temp.observation_areas:
@@ -327,7 +334,7 @@ class RRT:
         self.obstacles = obstacles
         self.xy_cords = [[0, 1]]
         self.observation_areas = observation_areas
-        self.observations = []  # On form [[observation_node, observation_area],...]
+        self.observations = []  # On form [[observation_node, observation_area, area_index],...]
         self.start_cost = 0  # Initial cost, eg. for observation node
         self.obs_cost = 0  # The current "final cost" when an observation is made
         self.children = []  # Keep track of children (from observations)
@@ -424,7 +431,7 @@ class RRT:
         if observation is not None:
             self.obs_made += 1
             new_node.observed = True
-            self.observations.append([new_node, area])
+            self.observations.append([new_node, area, area_index])
 
         # Update final parameters
         boolean, obs_node = self.observation_in_path(new_node)

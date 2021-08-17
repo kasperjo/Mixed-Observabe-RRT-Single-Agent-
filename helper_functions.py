@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from Version12_generalizedPlan_oneAgent import Node, RRT
 
 
 
@@ -43,7 +42,6 @@ def plot(model, path, color, label=None):
     plt.xlim(tree.Xi[0])
     plt.ylim(tree.Xi[1])
     plt.legend()
-    plt.show()
 
 def plot_all_observations(model, tree=None):
     """
@@ -250,6 +248,7 @@ def array_to_path(arr, tree):
     :param arr: path in the form of a numpy array with states
     :return: path of nodes
     """
+    from Version12_generalizedPlan_oneAgent import Node
     arr = arr.tolist()
     path = []
     for coords in arr:

@@ -29,6 +29,7 @@ class system(object):
             y_next = data["q"][1]
             theta_next = data["q"][5]
         elif self.simulation=='drone':
+            # Apply input in 'main.py' for drone
             pass  # TODO
         else:
             xt = self.x[-1]
